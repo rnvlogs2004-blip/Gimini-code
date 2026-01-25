@@ -1,0 +1,425 @@
+<script>
+    // === CONFIGURATION (UPDATED FOR GITHUB) ===
+    // अपनी रिपॉजिटरी का नाम यहाँ लिखें (Ex: Username/RepoName)
+    const REPO = "YOUR_GITHUB_USERNAME/YOUR_REPO_NAME"; 
+    
+    // यहाँ अपना GitHub Personal Access Token (Classic) डालें
+    // ध्यान रहे: Repo Scope (repo, workflow) permission होनी चाहिए
+    const TOKEN = "ghp_YOUR_GITHUB_TOKEN_HERE"; 
+    
+    const FILE = "Key.json";
+    const BRANCH = "main";
+    
+    // GitHub API URL structure
+    const API = `https://api.github.com/repos/${REPO}/contents/${FILE}`;
+    
+    // A very distant future timestamp
+    const LIFETIME_TS = 99999999999999; 
+
+    let DATA = { config:{}, security:{}, ui:{}, theme:{}, social_links:{}, promo:{}, update:{}, blacklist:[], keys:{} };
+    let EDIT_ID = null;
+    let SORT = 'default';
+    
+    // GitHub को फाइल अपडेट करने के लिए SHA की जरूरत होती है
+    let CURRENT_SHA = null;
+
+    function toast(msg, err=false) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.style.background = err ? '#ff4d4d' : '#bb66ff';
+        t.style.opacity = 1; t.style.transform = 'translate(-50%, -5px)';
+        setTimeout(()=> { t.style.opacity = 0; t.style.transform = 'translate(-50%, 0)'; }, 3000);
+    }
+
+    // === API LOGIC (GITHUB VERSION) ===
+    async function loadData() {
+        document.getElementById('loader').style.display = 'flex';
+        try {
+            // GitHub API call
+            const r = await fetch(`${API}?ref=${BRANCH}`, { 
+                headers: { 
+                    'Authorization': `Bearer ${TOKEN}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                } 
+            });
+
+            if(r.status === 404) {
+                toast("Key.json not found. Starting fresh.", true);
+                document.getElementById('loader').style.display = 'none';
+                return;
+            }
+            if(!r.ok) throw new Error(r.statusText || "Failed to connect to GitHub");
+            
+            const j = await r.json();
+            
+            // GitHub फाइल का SHA सेव करना जरुरी है अपडेट के लिए
+            CURRENT_SHA = j.sha;
+
+            // GitHub content में कभी-कभी newlines (\n) होते हैं, उन्हें हटाना पड़ता है
+            const cleanContent = j.content.replace(/\n/g, '');
+            const content = JSON.parse(atob(cleanContent));
+            
+            DATA = content;
+            if(!DATA.keys) DATA.keys = {};
+            if(!DATA.blacklist) DATA.blacklist = [];
+            
+            renderAll();
+            toast("Data Synced Successfully");
+        } catch(e) {
+            console.error(e);
+            toast("Load Error: " + e.message, true);
+        } finally {
+            document.getElementById('loader').style.display = 'none';
+        }
+    }
+
+    async function saveAllData() {
+        // ... (सारा डेटा collection logic वही रहेगा जो पहले था) ...
+        // CONFIG
+        if(!DATA.config) DATA.config = {};
+        DATA.config.maintenance = document.getElementById('c_maint').value === 'true';
+        DATA.config.silentCheck = document.getElementById('c_silent').value === 'true';
+        DATA.config.timezone = document.getElementById('c_tz').value;
+        DATA.config.adminUrl = document.getElementById('c_admin').value;
+        DATA.config.tgBotToken = document.getElementById('c_bot').value;
+        DATA.config.tgChatId = document.getElementById('c_chat').value;
+        DATA.config.broadcastEnabled = document.getElementById('c_bc_active').value === 'true';
+        DATA.config.broadcastMessage = document.getElementById('c_bc_msg').value;
+
+        // SECURITY
+        if(!DATA.security) DATA.security = {};
+        DATA.security.packageName = document.getElementById('s_pkg').value;
+        DATA.security.killOnMismatch = document.getElementById('s_kill').value === 'true';
+        const bl = document.getElementById('s_bl').value.trim();
+        DATA.blacklist = bl ? bl.split('\n').map(x=>x.trim()).filter(x=>x) : [];
+
+        // UI
+        if(!DATA.ui) DATA.ui = {};
+        DATA.ui.title = document.getElementById('u_title').value;
+        DATA.ui.subtitle = document.getElementById('u_sub').value;
+        DATA.ui.loginBtn = document.getElementById('u_lbtn').value;
+        DATA.ui.adminBtn = document.getElementById('u_abtn').value;
+        DATA.ui.errorTitle = document.getElementById('ui_errorTitle').value;
+        DATA.ui.errorSub = document.getElementById('ui_errorSub').value;
+        DATA.ui.enableParticles = document.getElementById('ui_enableParticles').value === 'true';
+        DATA.ui.particleColor1 = document.getElementById('ui_particleColor1').value;
+        DATA.ui.particleColor2 = document.getElementById('ui_particleColor2').value;
+        
+        if(!DATA.ui.socials) DATA.ui.socials = {};
+        DATA.ui.socials.telegram = document.getElementById('soc_telegram').value === 'true';
+        DATA.ui.socials.youtube = document.getElementById('soc_youtube').value === 'true';
+        DATA.ui.socials.instagram = document.getElementById('soc_instagram').value === 'true';
+
+        // THEME
+        if(!DATA.theme) DATA.theme = {};
+        DATA.theme.useCustom = document.getElementById('theme_useCustom').value === 'true';
+        DATA.theme.background = document.getElementById('theme_background').value;
+        DATA.theme.accent = document.getElementById('theme_accent').value;
+        DATA.theme.text = document.getElementById('theme_text').value;
+        DATA.theme.subText = document.getElementById('theme_subText').value;
+
+        // LINKS
+        if(!DATA.social_links) DATA.social_links = {};
+        DATA.social_links.telegram = document.getElementById('l_tg').value;
+        DATA.social_links.youtube = document.getElementById('l_yt').value;
+        DATA.social_links.instagram = document.getElementById('l_ig').value;
+
+        // PROMO
+        if(!DATA.promo) DATA.promo = {};
+        DATA.promo.enabled = document.getElementById('p_en').value === 'true';
+        DATA.promo.text = document.getElementById('p_txt').value;
+        DATA.promo.url = document.getElementById('p_url').value;
+
+        // UPDATE
+        if(!DATA.update) DATA.update = {};
+        DATA.update.available = document.getElementById('up_avail').value === 'true';
+        DATA.update.force = document.getElementById('up_force').value === 'true';
+        DATA.update.version = document.getElementById('up_ver').value;
+        DATA.update.url = document.getElementById('up_url').value;
+
+
+        // Push to GitHub
+        document.getElementById('loader').style.display = 'flex';
+        try {
+            // अगर SHA नहीं है तो पहले लोड करें (Safe guard)
+            if (!CURRENT_SHA) {
+                 await loadData();
+            }
+
+            const payload = {
+                message: "Update from Admin Panel", // Commit message
+                content: btoa(JSON.stringify(DATA, null, 2)), // Content in base64
+                sha: CURRENT_SHA, // REQUIRED for GitHub updates
+                branch: BRANCH
+            };
+            
+            const r = await fetch(API, {
+                method: 'PUT',
+                headers: { 
+                    'Authorization': `Bearer ${TOKEN}`, 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/vnd.github.v3+json'
+                },
+                body: JSON.stringify(payload)
+            });
+            
+            if(!r.ok) {
+                const errJson = await r.json();
+                throw new Error(errJson.message || "GitHub API Error");
+            }
+            
+            const respData = await r.json();
+            // नया SHA अपडेट करें वरना अगली बार सेव करने पर error आएगा
+            CURRENT_SHA = respData.content.sha; 
+            
+            toast("Changes Saved to GitHub!");
+        } catch(e) {
+            console.error(e);
+            toast("Save Failed: " + e.message, true);
+        } finally {
+            document.getElementById('loader').style.display = 'none';
+        }
+    }
+
+    // === KEY HELPERS (बाकी सब सेम रहेगा) ===
+    function getExpiryTimestamp(d) {
+        if (d.type !== 'date' || !d.value) return LIFETIME_TS;
+        const expiry = new Date(d.value).getTime();
+        return isNaN(expiry) ? LIFETIME_TS : expiry;
+    }
+
+    function getStatusDot(d) {
+        if(d.type === 'lifetime') return 'dot-lifetime';
+        if(d.type === 'duration') return 'dot-duration';
+        if(d.type === 'date' && d.value) {
+            const exp = new Date(d.value).getTime();
+            const now = Date.now();
+            if(isNaN(exp)) return 'dot-valid';
+            if(exp < now) return 'dot-expired';
+            if(exp - now < 86400000 * 7) return 'dot-warning';
+            return 'dot-valid';
+        }
+        return 'dot-valid';
+    }
+
+    function renderAll() {
+        renderKeys();
+        // ... (बाकी का render logic सेम रहेगा, बस copy-paste कर लेना पुराने कोड से या फिर मैं पूरा लिखूँ?) ...
+        // (जगह बचाने के लिए मैंने यहाँ skip किया है क्योंकि बाकी logic GitLab/GitHub से प्रभावित नहीं होता)
+        
+        // CONFIG RENDER
+        const c = DATA.config || {};
+        document.getElementById('c_maint').value = (c.maintenance===true).toString();
+        document.getElementById('c_silent').value = (c.silentCheck!==false).toString();
+        document.getElementById('c_tz').value = c.timezone || '';
+        document.getElementById('c_admin').value = c.adminUrl || '';
+        document.getElementById('c_bot').value = c.tgBotToken || '';
+        document.getElementById('c_chat').value = c.tgChatId || '';
+        document.getElementById('c_bc_active').value = (c.broadcastEnabled===true).toString();
+        document.getElementById('c_bc_msg').value = c.broadcastMessage || '';
+
+        // SECURITY RENDER
+        const s = DATA.security || {};
+        document.getElementById('s_pkg').value = s.packageName || '';
+        document.getElementById('s_kill').value = (s.killOnMismatch===true).toString();
+        document.getElementById('s_bl').value = (DATA.blacklist || []).join('\n');
+
+        // UI RENDER
+        const u = DATA.ui || {};
+        document.getElementById('u_title').value = u.title || '';
+        document.getElementById('u_sub').value = u.subtitle || '';
+        document.getElementById('u_lbtn').value = u.loginBtn || '';
+        document.getElementById('u_abtn').value = u.adminBtn || '';
+        document.getElementById('ui_errorTitle').value = u.errorTitle || '';
+        document.getElementById('ui_errorSub').value = u.errorSub || '';
+        document.getElementById('ui_enableParticles').value = (u.enableParticles===true).toString();
+        document.getElementById('ui_particleColor1').value = u.particleColor1 || '#ff00ea';
+        document.getElementById('ui_particleColor2').value = u.particleColor2 || '#0000ff';
+        const soc = u.socials || {};
+        document.getElementById('soc_telegram').value = (soc.telegram!==false).toString();
+        document.getElementById('soc_youtube').value = (soc.youtube!==false).toString();
+        document.getElementById('soc_instagram').value = (soc.instagram!==false).toString();
+
+        // THEME RENDER
+        const t = DATA.theme || {};
+        document.getElementById('theme_useCustom').value = (t.useCustom===true).toString();
+        document.getElementById('theme_background').value = t.background || '#000000';
+        document.getElementById('theme_accent').value = t.accent || '#bb66ff';
+        document.getElementById('theme_text').value = t.text || '#ffffff';
+        document.getElementById('theme_subText').value = t.subText || '#d1d1d1';
+
+        // LINKS RENDER
+        const l = DATA.social_links || {};
+        document.getElementById('l_tg').value = l.telegram || '';
+        document.getElementById('l_yt').value = l.youtube || '';
+        document.getElementById('l_ig').value = l.instagram || '';
+
+        // PROMO RENDER
+        const p = DATA.promo || {};
+        document.getElementById('p_en').value = (p.enabled===true).toString();
+        document.getElementById('p_txt').value = p.text || '';
+        document.getElementById('p_url').value = p.url || '';
+
+        // UPDATE RENDER
+        const up = DATA.update || {};
+        document.getElementById('up_avail').value = (up.available===true).toString();
+        document.getElementById('up_force').value = (up.force===true).toString();
+        document.getElementById('up_ver').value = up.version || '';
+        document.getElementById('up_url').value = up.url || '';
+    }
+    
+    function renderKeys() {
+        const list = document.getElementById('keysList');
+        list.innerHTML = '';
+        const query = document.getElementById('search').value.toLowerCase();
+        
+        let keys = Object.keys(DATA.keys).filter(k => k.toLowerCase().includes(query));
+        
+        keys.sort((a, b) => {
+            const keyA = DATA.keys[a];
+            const keyB = DATA.keys[b];
+            if (SORT === 'az') return a.localeCompare(b);
+            const expiryA = getExpiryTimestamp(keyA);
+            const expiryB = getExpiryTimestamp(keyB);
+            if (expiryA !== expiryB) return expiryA - expiryB;
+            return a.localeCompare(b);
+        });
+
+        if(keys.length === 0) {
+            list.innerHTML = `<div style="text-align:center; padding:40px; opacity:0.5">No Keys Found</div>`;
+            return;
+        }
+
+        keys.forEach(k => {
+            const d = DATA.keys[k];
+            const dot = getStatusDot(d);
+            const devices = d.devices ? `<span class="tag"><i class="fas fa-mobile"></i> ${d.devices.length}</span>` : '';
+            
+            list.innerHTML += `
+            <div class="key-item" onclick="copy('${k}')">
+                <div class="k-info">
+                    <h4><span class="dot ${dot}"></span> ${k}</h4>
+                    <div class="k-tags">
+                        <span class="tag">${d.type.toUpperCase()}</span>
+                        <span class="tag">${d.value || '∞'}</span>
+                        ${devices}
+                    </div>
+                </div>
+                <div class="k-actions">
+                    <i class="fas fa-pen" onclick="event.stopPropagation(); edit('${k}')"></i>
+                    <i class="fas fa-trash" onclick="event.stopPropagation(); delKey('${k}')"></i>
+                </div>
+            </div>`;
+        });
+    }
+
+    // === UTILITY FUNCTIONS (Same as before) ===
+    function saveKey() {
+        const name = document.getElementById('mk_name').value.trim();
+        if(!name) return toast("Key Name Required", true);
+        const type = document.getElementById('mk_type').value;
+        const val = document.getElementById('mk_val').value.trim();
+        const int = document.getElementById('mk_int').value.trim() || '1d';
+        const devRaw = document.getElementById('mk_dev').value.trim();
+        const notify = document.getElementById('mk_notify').value === 'true';
+        const tst = document.getElementById('mk_toast').value.trim();
+        const keyObj = { type: type, interval: int, notify: notify };
+        if(type !== 'lifetime') keyObj.value = val;
+        if(tst) keyObj.toast = tst;
+        if(devRaw) keyObj.devices = devRaw.split(/[\n,]+/).map(x=>x.trim()).filter(x=>x);
+        if(EDIT_ID && EDIT_ID !== name) delete DATA.keys[EDIT_ID];
+        DATA.keys[name] = keyObj;
+        closeM('keyModal');
+        renderKeys();
+        saveAllData();
+    }
+
+    function generate() {
+        const prefix = document.getElementById('gk_pre').value.trim().toUpperCase();
+        const amount = parseInt(document.getElementById('gk_amt').value) || 1;
+        const type = document.getElementById('gk_type').value;
+        const val = document.getElementById('gk_val').value.trim();
+        const int = document.getElementById('gk_int').value.trim() || '1d';
+        const devRaw = document.getElementById('gk_dev').value.trim();
+        const notify = document.getElementById('gk_notify').value === 'true';
+        const tst = document.getElementById('gk_toast').value.trim();
+        const base = { type: type, interval: int, notify: notify };
+        if(type !== 'lifetime') base.value = val;
+        if(tst) base.toast = tst;
+        if(devRaw) base.devices = devRaw.split(',').map(x=>x.trim()).filter(x=>x);
+        for(let i=0; i<amount; i++) {
+            const rand = Math.random().toString(36).substring(2,6).toUpperCase();
+            const name = prefix ? `${prefix}_${rand}` : `KEY_${rand}`;
+            DATA.keys[name] = JSON.parse(JSON.stringify(base));
+        }
+        closeM('genModal');
+        renderKeys();
+        saveAllData();
+    }
+
+    function delKey(k) {
+        if(confirm('Delete ' + k + '?')) {
+            delete DATA.keys[k];
+            renderKeys();
+            saveAllData();
+        }
+    }
+
+    function copy(txt) { navigator.clipboard.writeText(txt); toast('Copied!'); }
+    
+    function edit(k) {
+        EDIT_ID = k;
+        const d = DATA.keys[k];
+        document.getElementById('mk_name').value = k;
+        document.getElementById('mk_name').disabled = true; 
+        document.getElementById('mk_type').value = d.type;
+        document.getElementById('mk_val').value = d.value || '';
+        document.getElementById('mk_int').value = d.interval || '1d';
+        document.getElementById('mk_dev').value = (d.devices || []).join('\n');
+        document.getElementById('mk_notify').value = (d.notify!==false).toString();
+        document.getElementById('mk_toast').value = d.toast || '';
+        toggleMode('mk');
+        document.getElementById('keyModal').style.display = 'flex';
+    }
+
+    function openKeyModal() {
+        EDIT_ID = null;
+        document.getElementById('mk_name').value = '';
+        document.getElementById('mk_name').disabled = false;
+        document.getElementById('mk_type').value = 'duration';
+        document.getElementById('mk_val').value = '';
+        document.getElementById('mk_int').value = '1d';
+        document.getElementById('mk_dev').value = '';
+        document.getElementById('mk_notify').value = 'true';
+        document.getElementById('mk_toast').value = '';
+        toggleMode('mk');
+        document.getElementById('keyModal').style.display = 'flex';
+    }
+
+    function openGenModal() { document.getElementById('genModal').style.display = 'flex'; }
+    function closeM(id) { document.getElementById(id).style.display = 'none'; }
+    function toggleMode(p) {
+        const t = document.getElementById(p+'_type').value;
+        document.getElementById(p+'_val_grp').style.display = t === 'lifetime' ? 'none' : 'block';
+    }
+    function nav(id, el) {
+        document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
+        document.getElementById('tab-'+id).classList.add('active');
+        document.querySelectorAll('.nav-btn, .side-btn').forEach(x=>x.classList.remove('active'));
+        const side = document.querySelector(`.side-btn[onclick*="'${id}'"]`);
+        const bot = document.querySelector(`.nav-btn[onclick*="'${id}'"]`);
+        if(side) side.classList.add('active');
+        if(bot) bot.classList.add('active');
+    }
+    function toggleSort() {
+        const m = document.getElementById('sortMenu');
+        m.style.display = m.style.display === 'block' ? 'none' : 'block';
+    }
+    function setSort(v, t) {
+        SORT = v;
+        document.getElementById('sortLbl').textContent = t;
+        toggleSort();
+        renderKeys();
+    }
+    function initApp() { loadData(); }
+</script>
